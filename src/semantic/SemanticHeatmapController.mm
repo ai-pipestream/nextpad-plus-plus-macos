@@ -36,19 +36,47 @@ struct NppSentenceSpan {
     long byteLength;
 };
 
-// Red → grey → green ramp (as {r,g,b} 0-255). t = 0 least similar, 1 most.
-static sptr_t nppHeatColorBGR(double t) {
-    static const int lo[3]  = { 0xD6, 0x45, 0x41 };  // red    #D64541
-    static const int mid[3] = { 0x8E, 0x8E, 0x8E };  // grey   #8E8E8E
-    static const int hi[3]  = { 0x2E, 0xCC, 0x71 };  // green  #2ECC71
-    t = std::min(1.0, std::max(0.0, t));
-    const int *a = (t < 0.5) ? lo  : mid;
-    const int *b = (t < 0.5) ? mid : hi;
-    double f = (t < 0.5) ? t * 2.0 : (t - 0.5) * 2.0;
-    int r = (int)(a[0] + (b[0] - a[0]) * f);
-    int g = (int)(a[1] + (b[1] - a[1]) * f);
-    int bl = (int)(a[2] + (b[2] - a[2]) * f);
-    return (sptr_t)((bl << 16) | (g << 8) | r);   // Scintilla wants BGR
+// ── Absolute cosine → color mapping ──────────────────────────────────────────
+// The input is the RAW cosine similarity (clamped to [0,1]), NOT a per-document
+// min–max normalization. An earlier version stretched each query's score range
+// to the full ramp; with cosine clustering that pushed most sentences into the
+// upper half and "everything green looked green". Fixed anchors keep colors
+// comparable across queries and reserve green for genuinely high similarity:
+//
+//     ≤ 0.45        clearly red        (#D64541)
+//   0.45 – 0.55     red → grey
+//   0.55 – 0.65     grey plateau       (#8E8E8E — deliberately muted mids)
+//   0.65 – 0.85     grey → green       (#2ECC71)
+//   0.85 – 1.0      green → DEEP green (#0B8A45 — near-exact matches read
+//                                       noticeably darker than ordinary hits)
+//
+// Piecewise-linear between the stops below; steepness comes from the anchor
+// placement rather than a gamma curve so each band is easy to reason about.
+static sptr_t nppHeatColorBGR(double score) {
+    static const struct { double s; int r, g, b; } kStops[] = {
+        { 0.00, 0xD6, 0x45, 0x41 },   // red
+        { 0.45, 0xD6, 0x45, 0x41 },   // red band ends
+        { 0.55, 0x8E, 0x8E, 0x8E },   // grey
+        { 0.65, 0x8E, 0x8E, 0x8E },   // grey plateau ends
+        { 0.85, 0x2E, 0xCC, 0x71 },   // green
+        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact)
+    };
+    static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);
+
+    double t = std::min(1.0, std::max(0.0, score));
+    int r = kStops[kStopCount - 1].r,
+        g = kStops[kStopCount - 1].g,
+        b = kStops[kStopCount - 1].b;
+    for (int i = 1; i < kStopCount; i++) {
+        if (t > kStops[i].s) continue;
+        double span = kStops[i].s - kStops[i - 1].s;
+        double f = (span > 0) ? (t - kStops[i - 1].s) / span : 1.0;
+        r = (int)(kStops[i - 1].r + (kStops[i].r - kStops[i - 1].r) * f);
+        g = (int)(kStops[i - 1].g + (kStops[i].g - kStops[i - 1].g) * f);
+        b = (int)(kStops[i - 1].b + (kStops[i].b - kStops[i - 1].b) * f);
+        break;
+    }
+    return (sptr_t)((b << 16) | (g << 8) | r);   // Scintilla wants BGR
 }
 
 @implementation SemanticHeatmapController {
@@ -242,7 +270,8 @@ static sptr_t nppHeatColorBGR(double t) {
                                        forKey:s];
             } else {
                 // Unembeddable sentence — keep ids aligned with spans by
-                // storing a zero vector (scores ~0, painted as mid/greyish).
+                // storing a zero vector (scores ~0, painted as low-similarity
+                // red under the absolute color mapping).
                 std::fill(scratch.begin(), scratch.end(), 0.0f);
             }
             [self_->_index addVector:scratch.data() sentenceID:sid++];
@@ -354,15 +383,12 @@ static sptr_t nppHeatColorBGR(double t) {
     [sci message:SCI_INDICATORCLEARRANGE wParam:0 lParam:docLen];
     if (hits.empty()) return;
 
-    // Normalize this query's score distribution to [0,1] so the ramp always
-    // uses its full red→grey→green width (raw cosine values cluster).
-    float minS = hits[0].score, maxS = hits[0].score;
-    for (const SemanticHit &h : hits) {
-        minS = std::min(minS, h.score);
-        maxS = std::max(maxS, h.score);
-    }
-    float range = maxS - minS;
-
+    // Colors come straight from the ABSOLUTE cosine score (see nppHeatColorBGR)
+    // — no per-document min–max stretch. Stretching flattened the top of the
+    // range: with clustered cosines every decent match maxed out as the same
+    // green. Absolute anchors keep "deep green" meaning near-exact regardless
+    // of what else is in the document, at the cost of some queries showing no
+    // green at all (which is honest: nothing matched well).
     for (const SemanticHit &h : hits) {
         size_t idx = (size_t)(h.sentenceID - _firstSentenceID);
         if (idx >= _spans.size()) continue;
@@ -370,9 +396,8 @@ static sptr_t nppHeatColorBGR(double t) {
         if (span.byteStart >= docLen) continue;
         long len = std::min((long)span.byteLength, (long)(docLen - span.byteStart));
 
-        double t = (range > 1e-6) ? (double)(h.score - minS) / range : 0.5;
         [sci message:SCI_SETINDICATORVALUE
-              wParam:(uptr_t)(nppHeatColorBGR(t) | SC_INDICVALUEBIT)];
+              wParam:(uptr_t)(nppHeatColorBGR((double)h.score) | SC_INDICVALUEBIT)];
         [sci message:SCI_INDICATORFILLRANGE wParam:(uptr_t)span.byteStart lParam:len];
     }
 }
