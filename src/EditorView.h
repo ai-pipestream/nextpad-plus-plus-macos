@@ -18,6 +18,11 @@ extern NSNotificationName const EditorViewDidSaveNotification;
 /// Posted when an editor's zoom level changes (SCN_ZOOM). Object is the EditorView.
 extern NSNotificationName const EditorViewZoomDidChangeNotification;
 
+/// Posted (coalesced, when idle) after text is inserted or deleted
+/// (SCN_MODIFIED). Object is the EditorView. Used by the semantic heatmap to
+/// schedule a debounced re-index of the document.
+extern NSNotificationName const EditorViewTextDidChangeNotification;
+
 /// Wraps ScintillaView and provides Nextpad++-style editor functionality.
 @interface EditorView : NSView <ScintillaNotificationProtocol>
 

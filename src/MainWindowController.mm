@@ -25,6 +25,8 @@
 #import "StyleConfiguratorWindowController.h"
 #import "ShortcutMapperWindowController.h"
 #import "IncrementalSearchBar.h"
+#import "SemanticSearchBar.h"
+#import "SemanticHeatmapController.h"
 #import "CommandPalettePanel.h"
 #import "GitHelper.h"
 #import "GitPanel.h"
@@ -1929,6 +1931,7 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
     <TabManagerDelegate, NSWindowDelegate,
      NSToolbarDelegate, FindReplacePanelDelegate, NSUserInterfaceValidations,
      NSSplitViewDelegate, IncrementalSearchBarDelegate,
+     SemanticSearchBarDelegate, SemanticHeatmapControllerDelegate,
      FolderTreePanelDelegate, GitPanelDelegate, ProjectPanelDelegate,
      FindWindowDelegate, SearchResultsPanelDelegate,
      ClipboardHistoryPanelDelegate, DocumentMapPanelDelegate,
@@ -2034,6 +2037,11 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
     // Incremental search bar
     IncrementalSearchBar *_incSearchBar;
     NSLayoutConstraint   *_incSearchBarHeightConstraint;
+
+    // Semantic heatmap search bar (macOS 14+, availability-gated)
+    SemanticSearchBar         *_semanticBar;
+    NSLayoutConstraint        *_semanticBarHeightConstraint;
+    SemanticHeatmapController *_semanticController;   // lazily created
 
     // Toolbar toggle button references (for state refresh)
     NppToggleToolbarButton *_tbSyncV, *_tbSyncH;
@@ -3982,6 +3990,12 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _incSearchBar.hidden = YES;
     _incSearchBar.delegate = self;
 
+    // ── Semantic heatmap search bar ────────────────────────────────────────────
+    _semanticBar = [[SemanticSearchBar alloc] initWithFrame:NSZeroRect];
+    _semanticBar.translatesAutoresizingMaskIntoConstraints = NO;
+    _semanticBar.hidden = YES;
+    _semanticBar.delegate = self;
+
     // ── Find panel ─────────────────────────────────────────────────────────────
     _findPanel = [[FindReplacePanel alloc] initWithFrame:NSZeroRect];
     _findPanel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -4161,13 +4175,15 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         // status bar. Clip them so a 0-height bar shows nothing. Gated.
         _findPanel.layer.masksToBounds   = YES;
         _incSearchBar.layer.masksToBounds = YES;
+        _semanticBar.layer.masksToBounds  = YES;
     }
 
-    for (NSView *v in @[_searchSplitView, _incSearchBar, _findPanel, _statusBar]) {
+    for (NSView *v in @[_searchSplitView, _incSearchBar, _semanticBar, _findPanel, _statusBar]) {
         [content addSubview:v];
     }
 
     _incSearchBarHeightConstraint = [_incSearchBar.heightAnchor constraintEqualToConstant:0];
+    _semanticBarHeightConstraint = [_semanticBar.heightAnchor constraintEqualToConstant:0];
     _findPanelHeightConstraint = [_findPanel.heightAnchor constraintEqualToConstant:0];
 
     // Tahoe: inset the editor/panel area from the window edges so the rounded
@@ -4187,11 +4203,17 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
         [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor constant:(_tahoeGlass ? -6.0 : 0.0)],
 
-        // Incremental search bar (sits between editor and find panel)
+        // Incremental search bar (sits between editor and semantic bar)
         [_incSearchBar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [_incSearchBar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         _incSearchBarHeightConstraint,
-        [_incSearchBar.bottomAnchor constraintEqualToAnchor:_findPanel.topAnchor],
+        [_incSearchBar.bottomAnchor constraintEqualToAnchor:_semanticBar.topAnchor],
+
+        // Semantic heatmap search bar (sits between incremental bar and find panel)
+        [_semanticBar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [_semanticBar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        _semanticBarHeightConstraint,
+        [_semanticBar.bottomAnchor constraintEqualToAnchor:_findPanel.topAnchor],
 
         // Find panel
         [_findPanel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
@@ -6788,6 +6810,68 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         self->_incSearchBar.hidden = YES;
     }];
     [self.window makeFirstResponder:ed.scintillaView.content];
+}
+
+// ── Semantic Heatmap Search ───────────────────────────────────────────────────
+
+- (void)showSemanticSearch:(id)sender {
+    if (![SemanticHeatmapController isFeatureAvailable]) {
+        // Soft-gated: app runs from macOS 11, embeddings need 14+.
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = [[NppLocalizer shared] translate:@"Semantic Heatmap Search"];
+        alert.informativeText = [[NppLocalizer shared]
+            translate:@"This feature requires macOS 14 or later."];
+        [alert runModal];
+        return;
+    }
+    if (!_semanticController) {
+        _semanticController = [[SemanticHeatmapController alloc] init];
+        _semanticController.delegate = self;
+    }
+    if (_semanticBar.hidden) {
+        _semanticBar.hidden = NO;
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            ctx.duration = 0.12;
+            self->_semanticBarHeightConstraint.animator.constant = _semanticBar.preferredHeight;
+        } completionHandler:^{
+            [self->_semanticBar activate];
+        }];
+    } else {
+        [_semanticBar activate];
+    }
+    // Attach eagerly so indexing starts while the user is still typing a query.
+    EditorView *ed = [self currentEditor];
+    if (ed) [_semanticController attachToEditor:ed];
+}
+
+// ── SemanticSearchBarDelegate ─────────────────────────────────────────────────
+
+- (void)semanticSearchBar:(id)bar queryDidChange:(NSString *)query {
+    if (!_semanticController) return;
+    // v1 scope: single document — retarget to whichever tab is now active.
+    EditorView *ed = [self currentEditor];
+    if (ed) [_semanticController attachToEditor:ed];
+    [_semanticController updateQuery:query];
+}
+
+- (void)semanticSearchBarDidClose:(id)bar {
+    [_semanticController detach];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.12;
+        self->_semanticBarHeightConstraint.animator.constant = 0;
+    } completionHandler:^{
+        self->_semanticBar.hidden = YES;
+    }];
+    EditorView *ed = [self currentEditor];
+    if (ed) [self.window makeFirstResponder:ed.scintillaView.content];
+}
+
+// ── SemanticHeatmapControllerDelegate ─────────────────────────────────────────
+
+- (void)semanticHeatmap:(SemanticHeatmapController *)controller
+        statusDidChange:(NSString *)status
+                   busy:(BOOL)busy {
+    [_semanticBar setStatus:status busy:busy];
 }
 
 // ── Change History ────────────────────────────────────────────────────────────

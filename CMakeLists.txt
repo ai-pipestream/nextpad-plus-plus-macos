@@ -142,6 +142,13 @@ set(APP_SRCS
     src/NppPluginManager.mm
     src/PluginsAdminWindowController.mm
     src/NppBuiltinLanguages.mm
+    # Semantic sentence heatmap search (src/semantic/ — swappable pipeline:
+    # Apple NL embeddings → in-memory/spill vector index → Metal/MPS scoring)
+    src/semantic/AppleNLEmbeddingProvider.mm
+    src/semantic/SemanticSimilarityEngines.mm
+    src/semantic/SpillableVectorIndex.mm
+    src/semantic/SemanticHeatmapController.mm
+    src/semantic/SemanticSearchBar.mm
 )
 
 set(APP_HEADERS
@@ -183,6 +190,12 @@ set(APP_HEADERS
     src/NppPluginInterfaceMac.h
     src/PluginsAdminWindowController.h
     src/NppBuiltinLanguages.h
+    src/semantic/SemanticProtocols.h
+    src/semantic/AppleNLEmbeddingProvider.h
+    src/semantic/SemanticSimilarityEngines.h
+    src/semantic/SpillableVectorIndex.h
+    src/semantic/SemanticHeatmapController.h
+    src/semantic/SemanticSearchBar.h
 )
 
 add_executable(NotepadPlusPlusMac MACOSX_BUNDLE ${APP_SRCS} ${APP_HEADERS})
@@ -473,6 +486,7 @@ set_target_properties(NotepadPlusPlusMac PROPERTIES
 
 target_include_directories(NotepadPlusPlusMac PRIVATE
     src
+    src/semantic
     "${SCI_ROOT}/include"
     "${SCI_ROOT}/cocoa"
     "${LEX_ROOT}/include"
@@ -484,6 +498,13 @@ target_link_libraries(NotepadPlusPlusMac PRIVATE
     "-framework Cocoa"
     "-framework QuartzCore"
     "-framework UniformTypeIdentifiers"
+    # Semantic heatmap search: embeddings, GPU scoring, CPU fallback.
+    # All four frameworks predate the 11.0 deployment target; the macOS-14-only
+    # class (NLContextualEmbedding) is guarded with @available at runtime.
+    "-framework NaturalLanguage"
+    "-framework Metal"
+    "-framework MetalPerformanceShaders"
+    "-framework Accelerate"
 )
 
 set_source_files_properties(${APP_SRCS} PROPERTIES
