@@ -12,7 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Narrow live-search bar shown below the editor — the semantic sibling of
 /// IncrementalSearchBar. The user types a natural-language query and every
 /// sentence in the document is tinted red→grey→green by similarity. Typing is
-/// debounced (embedding a query costs ~ms, not µs like a text find).
+/// debounced since each query update runs the embedding model.
 @interface SemanticSearchBar : NSView <NSTextFieldDelegate, NSControlTextEditingDelegate>
 
 @property (nonatomic, weak, nullable) id<SemanticSearchBarDelegate> delegate;

@@ -10,64 +10,42 @@
 #include <memory>
 #include <vector>
 
-// ── Indicator choice ─────────────────────────────────────────────────────────
-// Slot 20 is unused in this app: 0-7 belong to lexers, 8 is smart highlight,
-// 9-13 are the five mark styles, 17 spell check, 18 git diff, 19 clickable
-// links, 28 incremental search. One slot suffices for the whole heatmap
-// because SC_INDICFLAG_VALUEFORE makes each filled range take its fill color
-// from the per-range indicator VALUE — i.e. true continuous coloring.
+// Indicator slot 20 — first free slot (lexers use 0-7; 8, 9-13, 17, 18, 19
+// and 28 are taken by other features). SC_INDICFLAG_VALUEFORE lets one slot
+// carry a distinct color per filled range.
 static const int kSemanticHeatmapIndicator = 20;
 
-// ── Size guards ──────────────────────────────────────────────────────────────
-// Contextual embedding costs ~1ms+ per sentence; cap work so the editor never
-// wedges on a giant file. Beyond these limits the feature reports
-// "Document too large" instead of degrading the app.
+// Embedding costs ~1ms+ per sentence; beyond these limits the feature reports
+// "Document too large" instead of blocking on a giant file.
 static const long       kMaxDocBytes  = 2 * 1024 * 1024;
 static const NSUInteger kMaxSentences = 4096;
 
 // Debounce for index rebuild after document edits.
 static const int64_t kRebuildDebounceNs = (int64_t)(0.6 * NSEC_PER_SEC);
 
-// Sentence span: stable id → Scintilla byte range for the CURRENT build.
-// Ids are globally increasing; spans of a build are contiguous starting at
-// firstSentenceID, so hit.sentenceID - firstSentenceID indexes _spans.
+// Sentence span: stable id → Scintilla byte range for the current build.
+// Ids of a build are contiguous starting at firstSentenceID, so
+// hit.sentenceID - firstSentenceID indexes _spans.
 struct NppSentenceSpan {
     long byteStart;
     long byteLength;
 };
 
-// ── Absolute cosine → color mapping ──────────────────────────────────────────
-// The input is the RAW cosine similarity (clamped to [0,1]), NOT a per-document
-// min–max normalization. An earlier version stretched each query's score range
-// to the full ramp; with cosine clustering that pushed most sentences into the
-// upper half and "everything green looked green". Fixed anchors keep colors
-// comparable across queries. Retuned live on an M2 (Kristian). Design intent:
-// 0.5 similarity IS grey — the plateau is centered on 0.5 and scores fade into
-// red hues as they drop below it. Greens stay pulled high: the mid band drifts
-// only into a muted grey-green, real green enters late, and deep green is
-// reserved for near-exact matches. Fill alpha 100 (see configureIndicatorOn:).
-//
-//     ≤ 0.30        strong red          (#D64541 — clear lows)
-//   0.30 – 0.48     red fades → grey    (redder the further below 0.5)
-//   0.48 – 0.55     grey plateau        (#8E8E8E — centered on 0.5)
-//   0.55 – 0.70     grey → muted grey-green (#71A185 — still reads neutral,
-//                                       nothing is "green" before ~0.70)
-//   0.70 – 0.82     grey-green → bright green
-//   0.82 – 0.93     bright green        (#2ECC71 — strong matches)
-//   0.93 – 1.0      → DEEP green        (#0B8A45 — reserved for near-exact)
-//
-// Piecewise-linear between the stops below; steepness comes from the anchor
-// placement rather than a gamma curve so each band is easy to reason about.
+// Absolute cosine → color: raw score (clamped to [0,1]) interpolated
+// piecewise-linearly through fixed anchors, so colors are comparable across
+// queries (no per-document normalization). 0.5 similarity is grey; scores
+// fade to red below it; green enters late so mid scores stay neutral, and
+// deep green is reserved for near-exact matches.
 static sptr_t nppHeatColorBGR(double score) {
     static const struct { double s; int r, g, b; } kStops[] = {
         { 0.00, 0xD6, 0x45, 0x41 },   // strong red
-        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
-        { 0.48, 0x8E, 0x8E, 0x8E },   // grey reached just under 0.5
-        { 0.55, 0x8E, 0x8E, 0x8E },   // grey plateau ends
+        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade toward grey begins
+        { 0.48, 0x8E, 0x8E, 0x8E },   // grey
+        { 0.55, 0x8E, 0x8E, 0x8E },   // grey plateau (centered on 0.5)
         { 0.70, 0x71, 0xA1, 0x85 },   // muted grey-green — green entry gate
-        { 0.82, 0x2E, 0xCC, 0x71 },   // bright green reached
+        { 0.82, 0x2E, 0xCC, 0x71 },   // bright green
         { 0.93, 0x2E, 0xCC, 0x71 },   // bright-green band ends
-        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact only)
+        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact)
     };
     static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);
 
@@ -171,8 +149,6 @@ static sptr_t nppHeatColorBGR(double score) {
     ScintillaView *sci = editor.scintillaView;
     [sci message:SCI_INDICSETSTYLE wParam:kSemanticHeatmapIndicator lParam:INDIC_FULLBOX];
     [sci message:SCI_INDICSETFLAGS wParam:kSemanticHeatmapIndicator lParam:SC_INDICFLAG_VALUEFORE];
-    // Alpha 100: 45 was too subtle in live testing — the tint must be
-    // obviously visible. Drawn UNDER the text so glyphs stay crisp.
     [sci message:SCI_INDICSETALPHA wParam:kSemanticHeatmapIndicator lParam:100];
     [sci message:SCI_INDICSETOUTLINEALPHA wParam:kSemanticHeatmapIndicator lParam:0];
     [sci message:SCI_INDICSETUNDER wParam:kSemanticHeatmapIndicator lParam:1]; // under text
@@ -279,9 +255,8 @@ static sptr_t nppHeatColorBGR(double score) {
                                                              length:dim * sizeof(float)]
                                        forKey:s];
             } else {
-                // Unembeddable sentence — keep ids aligned with spans by
-                // storing a zero vector (scores ~0, painted as low-similarity
-                // red under the absolute color mapping).
+                // Unembeddable sentence — store a zero vector (scores ~0) to
+                // keep ids aligned with spans.
                 std::fill(scratch.begin(), scratch.end(), 0.0f);
             }
             [self_->_index addVector:scratch.data() sentenceID:sid++];
@@ -303,9 +278,8 @@ static sptr_t nppHeatColorBGR(double score) {
 }
 
 /// Create provider / engine / index on first use (work queue). Returns nil on
-/// success or a user-facing error string. FAIL-LOUD policy: if Metal/MPS is
-/// missing or unsupported the whole feature is unavailable — there is no
-/// silent CPU fallback, the error is surfaced in the search bar instead.
+/// success or a user-facing error string. Fail-loud: without Metal/MPS the
+/// feature is unavailable — no CPU fallback.
 - (nullable NSString *)ensurePipelineForSample:(nullable NSString *)sampleText {
     if (_provider && _provider.isAvailable && _engine) return nil;
     if (@available(macOS 14.0, *)) {
@@ -393,12 +367,6 @@ static sptr_t nppHeatColorBGR(double score) {
     [sci message:SCI_INDICATORCLEARRANGE wParam:0 lParam:docLen];
     if (hits.empty()) return;
 
-    // Colors come straight from the ABSOLUTE cosine score (see nppHeatColorBGR)
-    // — no per-document min–max stretch. Stretching flattened the top of the
-    // range: with clustered cosines every decent match maxed out as the same
-    // green. Absolute anchors keep "deep green" meaning near-exact regardless
-    // of what else is in the document, at the cost of some queries showing no
-    // green at all (which is honest: nothing matched well).
     for (const SemanticHit &h : hits) {
         size_t idx = (size_t)(h.sentenceID - _firstSentenceID);
         if (idx >= _spans.size()) continue;

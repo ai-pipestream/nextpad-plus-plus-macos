@@ -29,16 +29,12 @@
              outScores:(float *)outScores {
     if (count == 0 || dimension == 0) return YES;
 
-    // MPS wants each matrix row aligned to rowBytesFromColumns; when that
-    // matches the packed layout (dim * 4 — true for typical embedding dims,
-    // which are multiples of 4) we upload with one memcpy, otherwise we
-    // repack row by row into the padded buffer.
+    // Rows must be aligned to the MPS-recommended stride; when it matches the
+    // packed layout the upload is a single memcpy, otherwise repack per row.
     NSUInteger rowBytes = [MPSMatrixDescriptor rowBytesFromColumns:dimension
                                                           dataType:MPSDataTypeFloat32];
     NSUInteger packedRowBytes = dimension * sizeof(float);
 
-    // Shared-storage buffers written directly by the host — unified memory on
-    // Apple silicon, so there is no private-storage copy to keep in sync.
     id<MTLBuffer> matBuf = [_device newBufferWithLength:count * rowBytes
                                                 options:MTLResourceStorageModeShared];
     id<MTLBuffer> qBuf   = [_device newBufferWithBytes:query

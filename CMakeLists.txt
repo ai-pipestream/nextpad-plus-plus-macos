@@ -142,9 +142,8 @@ set(APP_SRCS
     src/NppPluginManager.mm
     src/PluginsAdminWindowController.mm
     src/NppBuiltinLanguages.mm
-    # Semantic sentence heatmap search (src/semantic/ — swappable pipeline:
-    # Apple NL embeddings → in-memory/spill vector index → Metal/MPS scoring;
-    # no CPU fallback: missing Metal fails loud in the search bar)
+    # Semantic sentence heatmap search: Apple NL embeddings → in-memory/spill
+    # vector index → Metal/MPS scoring (no CPU fallback)
     src/semantic/AppleNLEmbeddingProvider.mm
     src/semantic/MetalSimilarityEngine.mm
     src/semantic/SpillableVectorIndex.mm
@@ -499,10 +498,8 @@ target_link_libraries(NotepadPlusPlusMac PRIVATE
     "-framework Cocoa"
     "-framework QuartzCore"
     "-framework UniformTypeIdentifiers"
-    # Semantic heatmap search: embeddings + GPU scoring. Metal/MPS is the ONLY
-    # scoring path (fail-loud, no CPU fallback). All three frameworks predate
-    # the 11.0 deployment target; the macOS-14-only class
-    # (NLContextualEmbedding) is guarded with @available at runtime.
+    # Semantic heatmap search. All three frameworks predate the 11.0 deployment
+    # target; the macOS-14-only NLContextualEmbedding is @available-guarded.
     "-framework NaturalLanguage"
     "-framework Metal"
     "-framework MetalPerformanceShaders"

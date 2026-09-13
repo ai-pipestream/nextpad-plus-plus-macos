@@ -3,8 +3,7 @@
 #include <cmath>
 #include <vector>
 
-// L2-normalize in place. Returns NO for a zero vector (nothing to normalize —
-// caller should treat the embed as failed rather than divide by zero).
+// L2-normalize in place. Returns NO for a zero vector.
 static BOOL nppL2Normalize(float *v, NSUInteger dim) {
     double sumSq = 0;
     for (NSUInteger i = 0; i < dim; i++) sumSq += (double)v[i] * (double)v[i];
@@ -43,9 +42,8 @@ static BOOL nppL2Normalize(float *v, NSUInteger dim) {
                 _backendName = @"contextual";
             }
         } else {
-            // Assets not on disk yet — request the on-demand download so the
-            // contextual backend is available on a future launch, and fall
-            // through to the static sentence embedding for this session.
+            // Request the on-demand asset download for future launches; use
+            // the static sentence embedding for this session.
             [ctx requestEmbeddingAssetsWithCompletionHandler:
                 ^(NLContextualEmbeddingAssetsResult result, NSError *_Nullable error) { /* fire-and-forget */ }];
         }

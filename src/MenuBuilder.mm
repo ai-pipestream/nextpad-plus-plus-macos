@@ -467,9 +467,8 @@ static NSMenu *buildLanguageMenu() {
     [searchMenu addItem:itemMod(@"Replace…", @selector(showReplacePanel:), @"h",
                                 NSEventModifierFlagCommand | NSEventModifierFlagShift)];
     [searchMenu addItem:item(@"Incremental Search", @selector(showIncrementalSearch:), @"i")];
-    // ⌥⌘I — pairs with ⌘I the way ⇧⌘F pairs with ⌘F: modifier means "another
-    // variant of the same idea". Feature soft-requires macOS 14 (the action
-    // shows an explanatory alert on older systems).
+    // ⌥⌘I — semantic variant of ⌘I. Requires macOS 14; the action explains on
+    // older systems.
     [searchMenu addItem:itemMod(@"Semantic Heatmap Search", @selector(showSemanticSearch:), @"i",
                                 NSEventModifierFlagCommand | NSEventModifierFlagOption)];
     addSep(searchMenu);

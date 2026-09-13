@@ -3,16 +3,12 @@
 #include <cstring>
 #include <vector>
 
-// ── Spill threshold policy ────────────────────────────────────────────────────
-// The hot set is capped by BYTES so the RAM budget does not balloon with the
-// embedding dimension: 16 MB ≈ 8k vectors at dim 512 / 16k at dim 256 — far
-// beyond any document the v1 heatmap embeds (the controller caps sentence
-// count well below that), so the spill path is a safety valve, not the norm.
-// Overflow vectors append to an unlinked-on-dealloc temp file and are streamed
-// back through a fixed 2 MB scratch chunk at query time. Chunking bounds peak
-// memory regardless of how much spilled; each chunk goes through the same
-// batched similarity engine as the hot set, so spill only costs I/O + a few
-// extra engine dispatches.
+// Spill policy: the hot set is capped by bytes (16 MB ≈ 8k vectors at dim 512)
+// so the RAM budget is independent of embedding dimension. Vectors are hot in
+// insertion (document) order; overflow appends to a temp file removed on
+// dealloc. At query time spilled vectors stream back through a fixed 2 MB
+// chunk and are scored with the same batched engine as the hot set, keeping
+// peak memory bounded and results exact.
 static const NSUInteger kHotSetMaxBytes     = 16u * 1024u * 1024u;
 static const NSUInteger kSpillChunkMaxBytes =  2u * 1024u * 1024u;
 
@@ -135,8 +131,8 @@ static const NSUInteger kSpillChunkMaxBytes =  2u * 1024u * 1024u;
     return YES;
 }
 
-// Reload path: stream the spill file in bounded chunks and score each chunk
-// with the same batched engine used for the hot set.
+// Stream the spill file in bounded chunks and score each chunk with the same
+// batched engine used for the hot set.
 - (BOOL)scoreSpilledForQuery:(const float *)query intoScores:(float *)outScores {
     NSFileHandle *reader = [NSFileHandle fileHandleForReadingAtPath:_spillPath];
     if (!reader) return NO;

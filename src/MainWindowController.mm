@@ -6848,7 +6848,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
 - (void)semanticSearchBar:(id)bar queryDidChange:(NSString *)query {
     if (!_semanticController) return;
-    // v1 scope: single document — retarget to whichever tab is now active.
+    // Single-document scope — retarget to whichever tab is now active.
     EditorView *ed = [self currentEditor];
     if (ed) [_semanticController attachToEditor:ed];
     [_semanticController updateQuery:query];
