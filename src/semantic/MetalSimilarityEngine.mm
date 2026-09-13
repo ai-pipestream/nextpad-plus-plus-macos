@@ -1,0 +1,88 @@
+#import "MetalSimilarityEngine.h"
+#import <Metal/Metal.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
+#include <cstring>
+
+@implementation MetalSimilarityEngine {
+    id<MTLDevice>       _device;
+    id<MTLCommandQueue> _queue;
+}
+
++ (nullable instancetype)engineIfAvailable {
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    if (!device || !MPSSupportsMTLDevice(device)) return nil;
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    if (!queue) return nil;
+
+    MetalSimilarityEngine *engine = [[self alloc] init];
+    engine->_device = device;
+    engine->_queue  = queue;
+    return engine;
+}
+
+- (NSString *)engineName { return @"Metal/MPS"; }
+
+- (BOOL)scoresForQuery:(const float *)query
+               vectors:(const float *)vectors
+                 count:(NSUInteger)count
+             dimension:(NSUInteger)dimension
+             outScores:(float *)outScores {
+    if (count == 0 || dimension == 0) return YES;
+
+    // Rows must be aligned to the MPS-recommended stride; when it matches the
+    // packed layout the upload is a single memcpy, otherwise repack per row.
+    NSUInteger rowBytes = [MPSMatrixDescriptor rowBytesFromColumns:dimension
+                                                          dataType:MPSDataTypeFloat32];
+    NSUInteger packedRowBytes = dimension * sizeof(float);
+
+    id<MTLBuffer> matBuf = [_device newBufferWithLength:count * rowBytes
+                                                options:MTLResourceStorageModeShared];
+    id<MTLBuffer> qBuf   = [_device newBufferWithBytes:query
+                                                length:packedRowBytes
+                                               options:MTLResourceStorageModeShared];
+    id<MTLBuffer> outBuf = [_device newBufferWithLength:count * sizeof(float)
+                                                options:MTLResourceStorageModeShared];
+    if (!matBuf || !qBuf || !outBuf) return NO;
+
+    if (rowBytes == packedRowBytes) {
+        memcpy(matBuf.contents, vectors, count * packedRowBytes);
+    } else {
+        char *dst = (char *)matBuf.contents;
+        for (NSUInteger r = 0; r < count; r++)
+            memcpy(dst + r * rowBytes, vectors + r * dimension, packedRowBytes);
+    }
+
+    MPSMatrixDescriptor *mDesc =
+        [MPSMatrixDescriptor matrixDescriptorWithRows:count
+                                              columns:dimension
+                                             rowBytes:rowBytes
+                                             dataType:MPSDataTypeFloat32];
+    MPSVectorDescriptor *qDesc =
+        [MPSVectorDescriptor vectorDescriptorWithLength:dimension dataType:MPSDataTypeFloat32];
+    MPSVectorDescriptor *outDesc =
+        [MPSVectorDescriptor vectorDescriptorWithLength:count dataType:MPSDataTypeFloat32];
+
+    MPSMatrix *matrix = [[MPSMatrix alloc] initWithBuffer:matBuf descriptor:mDesc];
+    MPSVector *qVec   = [[MPSVector alloc] initWithBuffer:qBuf descriptor:qDesc];
+    MPSVector *outVec = [[MPSVector alloc] initWithBuffer:outBuf descriptor:outDesc];
+
+    MPSMatrixVectorMultiplication *mv =
+        [[MPSMatrixVectorMultiplication alloc] initWithDevice:_device
+                                                    transpose:NO
+                                                         rows:count
+                                                      columns:dimension
+                                                        alpha:1.0
+                                                         beta:0.0];
+
+    id<MTLCommandBuffer> cb = [_queue commandBuffer];
+    if (!cb) return NO;
+    [mv encodeToCommandBuffer:cb inputMatrix:matrix inputVector:qVec resultVector:outVec];
+    [cb commit];
+    [cb waitUntilCompleted];
+    if (cb.error) return NO;
+
+    memcpy(outScores, outBuf.contents, count * sizeof(float));
+    return YES;
+}
+
+@end

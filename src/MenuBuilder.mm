@@ -467,6 +467,10 @@ static NSMenu *buildLanguageMenu() {
     [searchMenu addItem:itemMod(@"Replace…", @selector(showReplacePanel:), @"h",
                                 NSEventModifierFlagCommand | NSEventModifierFlagShift)];
     [searchMenu addItem:item(@"Incremental Search", @selector(showIncrementalSearch:), @"i")];
+    // ⌥⌘I — semantic variant of ⌘I. Requires macOS 14; the action explains on
+    // older systems.
+    [searchMenu addItem:itemMod(@"Semantic Heatmap Search", @selector(showSemanticSearch:), @"i",
+                                NSEventModifierFlagCommand | NSEventModifierFlagOption)];
     addSep(searchMenu);
     [searchMenu addItem:item(@"Search Results Window",  @selector(showSearchResultsWindow:), @"")];
     [searchMenu addItem:itemFn(@"Next Search Result",     @selector(nextSearchResult:),     NSF4FunctionKey, 0)];

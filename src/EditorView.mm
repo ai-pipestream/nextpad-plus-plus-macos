@@ -27,6 +27,7 @@ NSNotificationName const EditorViewDidGainFocusNotification  = @"EditorViewDidGa
 NSNotificationName const EditorViewDidSaveNotification        = @"EditorViewDidSaveNotification";
 NSNotificationName const EditorViewDidScrollNotification = @"EditorViewDidScrollNotification";
 NSNotificationName const EditorViewZoomDidChangeNotification  = @"EditorViewZoomDidChangeNotification";
+NSNotificationName const EditorViewTextDidChangeNotification  = @"EditorViewTextDidChangeNotification";
 
 // Forward-declare Lexilla's CreateLexer (statically linked)
 namespace Scintilla { struct ILexer5; }
@@ -4742,6 +4743,14 @@ static NSSet<NSString *> *_cLikeLanguages() {
                 if ([_scintillaView message:SCI_GETVIEWWS] != SCWS_INVISIBLE) {
                     [_scintillaView setNeedsDisplay:YES];
                 }
+                // Coalesced text-change notification (semantic heatmap re-index):
+                // at most one post per run-loop pass during rapid typing.
+                [[NSNotificationQueue defaultQueue]
+                    enqueueNotification:[NSNotification notificationWithName:EditorViewTextDidChangeNotification
+                                                                      object:self]
+                           postingStyle:NSPostWhenIdle
+                           coalesceMask:(NSNotificationCoalescingOnName | NSNotificationCoalescingOnSender)
+                               forModes:nil];
             }
             break;
         case SCN_SAVEPOINTREACHED:
