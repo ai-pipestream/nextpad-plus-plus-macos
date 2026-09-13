@@ -19,7 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 ///   2. embeds them via a SemanticEmbeddingProvider (Apple NaturalLanguage),
 ///   3. keeps them in a SemanticVectorIndex (in-memory hot set + disk spill),
 ///   4. on each query, scores every sentence with a SemanticSimilarityEngine
-///      (Metal/MPS, Accelerate fallback) and paints a red→grey→green heatmap
+///      (Metal/MPS only — no Metal means the feature reports a clear error
+///      instead of silently degrading) and paints a red→grey→green heatmap
 ///      using Scintilla indicator 20 with per-range colors
 ///      (SC_INDICFLAG_VALUEFORE).
 ///

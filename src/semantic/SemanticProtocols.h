@@ -37,12 +37,13 @@ typedef struct {
 ///
 /// Inputs are row-major: `vectors` is count × dimension floats, contiguous.
 /// All vectors (including the query) are assumed L2-normalized, so the engine
-/// only needs batched dot products. Implementations: MetalSimilarityEngine
-/// (MPSMatrixVectorMultiplication on the GPU) and AccelerateSimilarityEngine
-/// (cblas_sgemv CPU fallback).
+/// only needs batched dot products. Sole shipped implementation:
+/// MetalSimilarityEngine (MPSMatrixVectorMultiplication on the GPU). There is
+/// deliberately NO CPU fallback — when Metal/MPS is unavailable the feature
+/// fails loud in the UI. Alternative backends still plug in via this protocol.
 @protocol SemanticSimilarityEngine <NSObject>
 
-/// Human-readable backend name for status/debugging ("Metal/MPS", "Accelerate").
+/// Human-readable backend name for status/debugging (e.g. "Metal/MPS").
 @property (nonatomic, readonly) NSString *engineName;
 
 /// Write `count` cosine scores into outScores. Returns NO on failure

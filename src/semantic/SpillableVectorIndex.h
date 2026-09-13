@@ -28,7 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Not thread-safe: the heatmap controller confines it to one serial queue.
 @interface SpillableVectorIndex : NSObject <SemanticVectorIndex>
 
-/// engine performs the batched scoring (Metal/MPS or Accelerate).
+/// engine performs the batched scoring (Metal/MPS in this app).
 - (instancetype)initWithSimilarityEngine:(id<SemanticSimilarityEngine>)engine;
 
 /// Number of vectors currently living in the disk spill buffer (for status/tests).

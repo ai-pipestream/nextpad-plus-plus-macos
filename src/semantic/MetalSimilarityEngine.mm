@@ -1,10 +1,7 @@
-#import "SemanticSimilarityEngines.h"
+#import "MetalSimilarityEngine.h"
 #import <Metal/Metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
-#import <Accelerate/Accelerate.h>
 #include <cstring>
-
-#pragma mark - Metal / MPS
 
 @implementation MetalSimilarityEngine {
     id<MTLDevice>       _device;
@@ -40,6 +37,8 @@
                                                           dataType:MPSDataTypeFloat32];
     NSUInteger packedRowBytes = dimension * sizeof(float);
 
+    // Shared-storage buffers written directly by the host — unified memory on
+    // Apple silicon, so there is no private-storage copy to keep in sync.
     id<MTLBuffer> matBuf = [_device newBufferWithLength:count * rowBytes
                                                 options:MTLResourceStorageModeShared];
     id<MTLBuffer> qBuf   = [_device newBufferWithBytes:query
@@ -91,32 +90,3 @@
 }
 
 @end
-
-#pragma mark - Accelerate (CPU fallback)
-
-@implementation AccelerateSimilarityEngine
-
-- (NSString *)engineName { return @"Accelerate"; }
-
-- (BOOL)scoresForQuery:(const float *)query
-               vectors:(const float *)vectors
-                 count:(NSUInteger)count
-             dimension:(NSUInteger)dimension
-             outScores:(float *)outScores {
-    if (count == 0 || dimension == 0) return YES;
-    // scores = M · q, row-major count×dim matrix times dim vector.
-    cblas_sgemv(CblasRowMajor, CblasNoTrans,
-                (int)count, (int)dimension,
-                1.0f, vectors, (int)dimension,
-                query, 1,
-                0.0f, outScores, 1);
-    return YES;
-}
-
-@end
-
-id<SemanticSimilarityEngine> NppBestSimilarityEngine(void) {
-    MetalSimilarityEngine *metal = [MetalSimilarityEngine engineIfAvailable];
-    if (metal) return metal;
-    return [[AccelerateSimilarityEngine alloc] init];
-}

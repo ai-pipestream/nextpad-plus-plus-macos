@@ -2,7 +2,7 @@
 #import "EditorView.h"
 #import "SemanticProtocols.h"
 #import "AppleNLEmbeddingProvider.h"
-#import "SemanticSimilarityEngines.h"
+#import "MetalSimilarityEngine.h"
 #import "SpillableVectorIndex.h"
 #import <NaturalLanguage/NaturalLanguage.h>
 #include "Scintilla.h"
@@ -220,10 +220,9 @@ static sptr_t nppHeatColorBGR(double t) {
             }];
         }
 
-        if (![self_ ensurePipelineForSample:text]) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self_ reportStatus:@"Embedding model unavailable on this Mac" busy:NO];
-            });
+        NSString *pipelineError = [self_ ensurePipelineForSample:text];
+        if (pipelineError) {
+            [self_ reportStatus:pipelineError busy:NO];
             return;
         }
 
@@ -264,24 +263,35 @@ static sptr_t nppHeatColorBGR(double t) {
     });
 }
 
-/// Create provider / engine / index on first use (work queue). Returns NO if
-/// no embedding backend could be loaded.
-- (BOOL)ensurePipelineForSample:(nullable NSString *)sampleText {
-    if (_provider && _provider.isAvailable) return YES;
+/// Create provider / engine / index on first use (work queue). Returns nil on
+/// success or a user-facing error string. FAIL-LOUD policy: if Metal/MPS is
+/// missing or unsupported the whole feature is unavailable — there is no
+/// silent CPU fallback, the error is surfaced in the search bar instead.
+- (nullable NSString *)ensurePipelineForSample:(nullable NSString *)sampleText {
+    if (_provider && _provider.isAvailable && _engine) return nil;
     if (@available(macOS 14.0, *)) {
-        NSString *lang = nil;
-        if (sampleText.length) {
-            NSString *sample = sampleText.length > 2048
-                ? [sampleText substringToIndex:2048] : sampleText;
-            lang = [NLLanguageRecognizer dominantLanguageForString:sample];
+        if (!_engine) {
+            _engine = [MetalSimilarityEngine engineIfAvailable];
+            if (!_engine)
+                return @"Metal GPU unavailable — semantic search disabled";
         }
-        _provider = [[AppleNLEmbeddingProvider alloc] initWithLanguageHint:lang];
-        if (!_provider.isAvailable) { _provider = nil; return NO; }
-        if (!_engine) _engine = NppBestSimilarityEngine();
-        if (!_index)  _index  = [[SpillableVectorIndex alloc] initWithSimilarityEngine:_engine];
-        return YES;
+        if (!_provider || !_provider.isAvailable) {
+            NSString *lang = nil;
+            if (sampleText.length) {
+                NSString *sample = sampleText.length > 2048
+                    ? [sampleText substringToIndex:2048] : sampleText;
+                lang = [NLLanguageRecognizer dominantLanguageForString:sample];
+            }
+            _provider = [[AppleNLEmbeddingProvider alloc] initWithLanguageHint:lang];
+            if (!_provider.isAvailable) {
+                _provider = nil;
+                return @"Embedding model unavailable on this Mac";
+            }
+        }
+        if (!_index) _index = [[SpillableVectorIndex alloc] initWithSimilarityEngine:_engine];
+        return nil;
     }
-    return NO;
+    return @"Requires macOS 14 or later";
 }
 
 #pragma mark - Query → heatmap
