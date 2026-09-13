@@ -106,12 +106,12 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
     // Swatches match the heatmap anchors in SemanticHeatmapController.mm
     // (nppHeatColorBGR).
     static const struct { CGFloat r, g, b; } ramp[6] = {
-        { 0.84, 0.27, 0.25 },   // #D64541 red          (≤ 0.30)
-        { 0.70, 0.41, 0.39 },   // #B26964 red→grey     (~0.40)
-        { 0.56, 0.56, 0.56 },   // #8E8E8E grey         (0.5 = grey)
-        { 0.44, 0.63, 0.52 },   // #71A185 muted grey-green (~0.70)
-        { 0.18, 0.80, 0.44 },   // #2ECC71 bright green (0.82–0.93)
-        { 0.04, 0.54, 0.27 },   // #0B8A45 deep green   (near-exact, ≥ 0.93)
+        { 0.84, 0.27, 0.25 },   // #D64541 red          (≤ 0.35)
+        { 0.70, 0.41, 0.39 },   // #B26964 red→grey     (~0.60)
+        { 0.56, 0.56, 0.56 },   // #8E8E8E grey         (~0.75)
+        { 0.37, 0.68, 0.50 },   // #5EAD7F grey→green   (~0.84)
+        { 0.18, 0.80, 0.44 },   // #2ECC71 bright green (~0.90)
+        { 0.04, 0.54, 0.27 },   // #0B8A45 deep green   (near-exact, ≥ 0.9)
     };
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc] init];
     for (int i = 0; i < 6; i++) {

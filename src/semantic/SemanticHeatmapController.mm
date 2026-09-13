@@ -33,18 +33,18 @@ struct NppSentenceSpan {
 
 // Absolute cosine → color: raw score (clamped to [0,1]) interpolated
 // piecewise-linearly through fixed anchors, so colors are comparable across
-// queries (no per-document normalization). 0.5 similarity is grey; scores
-// fade to red below it; green enters late so mid scores stay neutral, and
-// deep green is reserved for near-exact matches.
+// queries (no per-document normalization). Scores below ~0.6 read as red
+// (stronger the lower), ~0.75 is neutral grey, and 0.9+ is deep green for
+// near-exact matches.
 static sptr_t nppHeatColorBGR(double score) {
     static const struct { double s; int r, g, b; } kStops[] = {
         { 0.00, 0xD6, 0x45, 0x41 },   // strong red
-        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade toward grey begins
-        { 0.48, 0x8E, 0x8E, 0x8E },   // grey
-        { 0.55, 0x8E, 0x8E, 0x8E },   // grey plateau (centered on 0.5)
-        { 0.70, 0x71, 0xA1, 0x85 },   // muted grey-green — green entry gate
-        { 0.82, 0x2E, 0xCC, 0x71 },   // bright green
-        { 0.93, 0x2E, 0xCC, 0x71 },   // bright-green band ends
+        { 0.35, 0xD6, 0x45, 0x41 },   // red band ends — fade toward grey begins
+        { 0.60, 0xB2, 0x69, 0x64 },   // red/grey boundary
+        { 0.72, 0x8E, 0x8E, 0x8E },   // grey
+        { 0.78, 0x8E, 0x8E, 0x8E },   // grey plateau around 0.75
+        { 0.90, 0x2E, 0xCC, 0x71 },   // bright green
+        { 0.93, 0x0B, 0x8A, 0x45 },   // deep green reached
         { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact)
     };
     static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);
