@@ -41,26 +41,30 @@ struct NppSentenceSpan {
 // min–max normalization. An earlier version stretched each query's score range
 // to the full ramp; with cosine clustering that pushed most sentences into the
 // upper half and "everything green looked green". Fixed anchors keep colors
-// comparable across queries. Twice retuned on an M2: round 1 narrowed the dark
-// bands at the extremes; round 2 (at fill alpha 100 "everything looks like a
-// match") pushed green entry UP so mid scores stay grey longer and only
-// genuinely strong matches go green at all:
+// comparable across queries. Retuned live on an M2 (Kristian). Design intent:
+// 0.5 similarity IS grey — the plateau is centered on 0.5 and scores fade into
+// red hues as they drop below it. Greens stay pulled high: the mid band drifts
+// only into a muted grey-green, real green enters late, and deep green is
+// reserved for near-exact matches. Fill alpha 100 (see configureIndicatorOn:).
 //
-//     ≤ 0.35        strong red         (#D64541 — clear lows)
-//   0.35 – 0.50     red fades → grey
-//   0.50 – 0.70     grey plateau       (#8E8E8E — wide neutral middle)
-//   0.70 – 0.82     grey → bright green (green entry deliberately late)
-//   0.82 – 0.93     bright green       (#2ECC71 — strong matches)
-//   0.93 – 1.0      → DEEP green       (#0B8A45 — reserved for near-exact)
+//     ≤ 0.30        strong red          (#D64541 — clear lows)
+//   0.30 – 0.48     red fades → grey    (redder the further below 0.5)
+//   0.48 – 0.55     grey plateau        (#8E8E8E — centered on 0.5)
+//   0.55 – 0.70     grey → muted grey-green (#71A185 — still reads neutral,
+//                                       nothing is "green" before ~0.70)
+//   0.70 – 0.82     grey-green → bright green
+//   0.82 – 0.93     bright green        (#2ECC71 — strong matches)
+//   0.93 – 1.0      → DEEP green        (#0B8A45 — reserved for near-exact)
 //
 // Piecewise-linear between the stops below; steepness comes from the anchor
 // placement rather than a gamma curve so each band is easy to reason about.
 static sptr_t nppHeatColorBGR(double score) {
     static const struct { double s; int r, g, b; } kStops[] = {
         { 0.00, 0xD6, 0x45, 0x41 },   // strong red
-        { 0.35, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
-        { 0.50, 0x8E, 0x8E, 0x8E },   // grey
-        { 0.70, 0x8E, 0x8E, 0x8E },   // grey plateau ends (wide middle)
+        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
+        { 0.48, 0x8E, 0x8E, 0x8E },   // grey reached just under 0.5
+        { 0.55, 0x8E, 0x8E, 0x8E },   // grey plateau ends
+        { 0.70, 0x71, 0xA1, 0x85 },   // muted grey-green — green entry gate
         { 0.82, 0x2E, 0xCC, 0x71 },   // bright green reached
         { 0.93, 0x2E, 0xCC, 0x71 },   // bright-green band ends
         { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact only)
