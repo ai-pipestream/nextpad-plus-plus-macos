@@ -103,9 +103,10 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;   // embedding isn't free
 }
 
 - (NSAttributedString *)legendString {
-    // "■■■■■" ramp matching the editor heatmap's absolute cosine anchors in
-    // SemanticHeatmapController.mm (nppHeatColorBGR): red band, red→grey mid,
-    // grey plateau, green, and the deep near-exact green.
+    // Six-swatch "■" ramp matching the editor heatmap's absolute cosine
+    // anchors in SemanticHeatmapController.mm (nppHeatColorBGR): red band,
+    // red→grey mid, grey at 0.5, muted grey-green gate, bright green, and the
+    // deep near-exact green.
     static const struct { CGFloat r, g, b; } ramp[6] = {
         { 0.84, 0.27, 0.25 },   // #D64541 red          (≤ 0.30)
         { 0.70, 0.41, 0.39 },   // #B26964 red→grey     (~0.40)
