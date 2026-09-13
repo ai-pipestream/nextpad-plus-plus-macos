@@ -41,25 +41,29 @@ struct NppSentenceSpan {
 // min–max normalization. An earlier version stretched each query's score range
 // to the full ramp; with cosine clustering that pushed most sentences into the
 // upper half and "everything green looked green". Fixed anchors keep colors
-// comparable across queries and reserve green for genuinely high similarity:
+// comparable across queries. Tuned after M2 live feedback: the DARK colors at
+// both extremes occupy narrow bands only, transitions start closer to the
+// middle, and most of the upper-mid range reads as BRIGHT green rather than
+// lingering in dark green:
 //
-//     ≤ 0.45        clearly red        (#D64541)
-//   0.45 – 0.55     red → grey
-//   0.55 – 0.65     grey plateau       (#8E8E8E — deliberately muted mids)
-//   0.65 – 0.85     grey → green       (#2ECC71)
-//   0.85 – 1.0      green → DEEP green (#0B8A45 — near-exact matches read
-//                                       noticeably darker than ordinary hits)
+//     ≤ 0.30        strong red         (#D64541 — narrow low band)
+//   0.30 – 0.48     red fades → grey   (fade starts well before the middle)
+//   0.48 – 0.58     grey plateau       (#8E8E8E — centered on ~0.5)
+//   0.58 – 0.72     grey → bright green
+//   0.72 – 0.92     bright green       (#2ECC71 — the "good match" band)
+//   0.92 – 1.0      → DEEP green       (#0B8A45 — reserved for near-exact)
 //
 // Piecewise-linear between the stops below; steepness comes from the anchor
 // placement rather than a gamma curve so each band is easy to reason about.
 static sptr_t nppHeatColorBGR(double score) {
     static const struct { double s; int r, g, b; } kStops[] = {
-        { 0.00, 0xD6, 0x45, 0x41 },   // red
-        { 0.45, 0xD6, 0x45, 0x41 },   // red band ends
-        { 0.55, 0x8E, 0x8E, 0x8E },   // grey
-        { 0.65, 0x8E, 0x8E, 0x8E },   // grey plateau ends
-        { 0.85, 0x2E, 0xCC, 0x71 },   // green
-        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact)
+        { 0.00, 0xD6, 0x45, 0x41 },   // strong red
+        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
+        { 0.48, 0x8E, 0x8E, 0x8E },   // grey
+        { 0.58, 0x8E, 0x8E, 0x8E },   // grey plateau ends
+        { 0.72, 0x2E, 0xCC, 0x71 },   // bright green reached
+        { 0.92, 0x2E, 0xCC, 0x71 },   // bright-green band ends
+        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact only)
     };
     static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);
 
@@ -163,7 +167,9 @@ static sptr_t nppHeatColorBGR(double score) {
     ScintillaView *sci = editor.scintillaView;
     [sci message:SCI_INDICSETSTYLE wParam:kSemanticHeatmapIndicator lParam:INDIC_FULLBOX];
     [sci message:SCI_INDICSETFLAGS wParam:kSemanticHeatmapIndicator lParam:SC_INDICFLAG_VALUEFORE];
-    [sci message:SCI_INDICSETALPHA wParam:kSemanticHeatmapIndicator lParam:45];
+    // Alpha 100: 45 was too subtle in live testing — the tint must be
+    // obviously visible. Drawn UNDER the text so glyphs stay crisp.
+    [sci message:SCI_INDICSETALPHA wParam:kSemanticHeatmapIndicator lParam:100];
     [sci message:SCI_INDICSETOUTLINEALPHA wParam:kSemanticHeatmapIndicator lParam:0];
     [sci message:SCI_INDICSETUNDER wParam:kSemanticHeatmapIndicator lParam:1]; // under text
 }
