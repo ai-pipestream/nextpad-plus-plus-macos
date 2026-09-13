@@ -6827,6 +6827,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     if (!_semanticController) {
         _semanticController = [[SemanticHeatmapController alloc] init];
         _semanticController.delegate = self;
+        _semanticController.sensitivity = _semanticBar.sensitivity;
     }
     if (_semanticBar.hidden) {
         _semanticBar.hidden = NO;
@@ -6834,7 +6835,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
             ctx.duration = 0.12;
             self->_semanticBarHeightConstraint.animator.constant = _semanticBar.preferredHeight;
         } completionHandler:^{
-            [self->_semanticBar activate];
+            if (!self->_semanticBar.hidden) [self->_semanticBar activate];
         }];
     } else {
         [_semanticBar activate];
@@ -6842,6 +6843,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     // Attach eagerly so indexing starts while the user is still typing a query.
     EditorView *ed = [self currentEditor];
     if (ed) [_semanticController attachToEditor:ed];
+    [_semanticController updateQuery:_semanticBar.query];
 }
 
 // ── SemanticSearchBarDelegate ─────────────────────────────────────────────────
@@ -6854,14 +6856,17 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     [_semanticController updateQuery:query];
 }
 
+- (void)semanticSearchBar:(id)bar sensitivityDidChange:(NSInteger)sensitivity {
+    _semanticController.sensitivity = sensitivity;
+}
+
 - (void)semanticSearchBarDidClose:(id)bar {
     [_semanticController detach];
+    _semanticBar.hidden = YES;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
         ctx.duration = 0.12;
         self->_semanticBarHeightConstraint.animator.constant = 0;
-    } completionHandler:^{
-        self->_semanticBar.hidden = YES;
-    }];
+    } completionHandler:nil];
     EditorView *ed = [self currentEditor];
     if (ed) [self.window makeFirstResponder:ed.scintillaView.content];
 }
@@ -8423,6 +8428,8 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
 - (void)tabManager:(id)tabManager didSelectEditor:(EditorView *)editor {
     _activeTabManager = tabManager;
+    if (_semanticController && !_semanticBar.hidden)
+        [_semanticController attachToEditor:editor];
     // Give the editor keyboard focus so the old pane's caret stops blinking
     // and SCN_FOCUSIN fires on the correct editor. Target the SCIContentView
     // (`.content`), not the outer ScintillaView NSView wrapper — only the
@@ -8497,6 +8504,8 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     // Find which tab manager owns this editor
     for (TabManager *mgr in @[_tabManager, _subTabManagerH, _subTabManagerV]) {
         if ([mgr.allEditors containsObject:ed]) {
+            if (_semanticController && !_semanticBar.hidden)
+                [_semanticController attachToEditor:ed];
             if (_activeTabManager != mgr) {
                 _activeTabManager = mgr;
                 [self updateTitle];

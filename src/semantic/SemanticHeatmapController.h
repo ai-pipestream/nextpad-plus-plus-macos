@@ -34,6 +34,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Editor currently driving the heatmap (nil when detached).
 @property (nonatomic, readonly, weak, nullable) EditorView *editor;
 
+/// Color sensitivity: -1 stricter, 0 standard, 1 broader. Scores are unchanged.
+@property (nonatomic) NSInteger sensitivity;
+
 /// Build the sentence index for the editor's content and watch it for edits.
 /// Re-attaching to the same editor is a no-op; attaching to a different one
 /// clears the old editor's heatmap first.

@@ -195,6 +195,7 @@ set(APP_HEADERS
     src/semantic/MetalSimilarityEngine.h
     src/semantic/SpillableVectorIndex.h
     src/semantic/SemanticHeatmapController.h
+    src/semantic/SemanticHeatmapColors.h
     src/semantic/SemanticSearchBar.h
 )
 

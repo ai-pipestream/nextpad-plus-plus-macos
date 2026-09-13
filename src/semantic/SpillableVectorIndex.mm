@@ -94,7 +94,7 @@ static const NSUInteger kSpillChunkMaxBytes =  2u * 1024u * 1024u;
 }
 
 - (NSUInteger)search:(const float *)query k:(NSUInteger)k hits:(SemanticHit *)hits {
-    if (k == 0 || _ids.empty()) return 0;
+    if (k == 0 || _ids.empty() || !query || !hits) return 0;
     std::vector<SemanticHit> all(_ids.size());
     NSUInteger n = [self scoreAllForQuery:query hits:all.data() capacity:all.size()];
     if (n == 0) return 0;
@@ -142,17 +142,22 @@ static const NSUInteger kSpillChunkMaxBytes =  2u * 1024u * 1024u;
     NSUInteger done = 0;
     BOOL ok = YES;
 
-    while (ok && done < _spilledCount) {
-        NSUInteger want = std::min(chunkVectors, _spilledCount - done);
-        NSData *chunk = [reader readDataOfLength:want * rowBytes];
-        if (chunk.length != want * rowBytes) { ok = NO; break; }
-        ok = [_engine scoresForQuery:query
-                             vectors:(const float *)chunk.bytes
-                               count:want dimension:_dimension
-                           outScores:outScores + done];
-        done += want;
+    @try {
+        while (ok && done < _spilledCount) {
+            NSUInteger want = std::min(chunkVectors, _spilledCount - done);
+            NSData *chunk = [reader readDataOfLength:want * rowBytes];
+            if (chunk.length != want * rowBytes) { ok = NO; break; }
+            ok = [_engine scoresForQuery:query
+                                 vectors:(const float *)chunk.bytes
+                                   count:want dimension:_dimension
+                               outScores:outScores + done];
+            done += want;
+        }
+    } @catch (NSException *e) {
+        ok = NO;
+    } @finally {
+        [reader closeFile];
     }
-    [reader closeFile];
     return ok;
 }
 

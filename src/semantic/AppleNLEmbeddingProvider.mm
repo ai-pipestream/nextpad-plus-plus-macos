@@ -7,7 +7,7 @@
 static BOOL nppL2Normalize(float *v, NSUInteger dim) {
     double sumSq = 0;
     for (NSUInteger i = 0; i < dim; i++) sumSq += (double)v[i] * (double)v[i];
-    if (sumSq <= 0) return NO;
+    if (!std::isfinite(sumSq) || sumSq <= 0) return NO;
     float inv = (float)(1.0 / sqrt(sumSq));
     for (NSUInteger i = 0; i < dim; i++) v[i] *= inv;
     return YES;
@@ -30,8 +30,6 @@ static BOOL nppL2Normalize(float *v, NSUInteger dim) {
 
     // ── Preferred: contextual token embedding, mean-pooled per sentence ──────
     NLContextualEmbedding *ctx = [NLContextualEmbedding contextualEmbeddingWithLanguage:_language];
-    if (!ctx && ![_language isEqualToString:NLLanguageEnglish])
-        ctx = [NLContextualEmbedding contextualEmbeddingWithLanguage:NLLanguageEnglish];
 
     if (ctx) {
         if (ctx.hasAvailableAssets) {
@@ -52,8 +50,6 @@ static BOOL nppL2Normalize(float *v, NSUInteger dim) {
     // ── Fallback: static sentence embedding (no asset download needed) ───────
     if (!_contextual) {
         NLEmbedding *sent = [NLEmbedding sentenceEmbeddingForLanguage:_language];
-        if (!sent && ![_language isEqualToString:NLLanguageEnglish])
-            sent = [NLEmbedding sentenceEmbeddingForLanguage:NLLanguageEnglish];
         if (sent) {
             _sentence   = sent;
             _dimension  = sent.dimension;

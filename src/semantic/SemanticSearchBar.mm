@@ -1,8 +1,10 @@
 #import "SemanticSearchBar.h"
 #import "NppLocalizer.h"
 #import "NppThemeManager.h"
+#include "SemanticHeatmapColors.h"
 
-static const CGFloat        kBarHeight        = 36.0;
+static NSString * const kSensitivityPreference = @"SemanticHeatmapSensitivity";
+static const CGFloat        kBarHeight        = 62.0;
 static const NSTimeInterval kQueryDebounceSec = 0.30;
 
 @implementation SemanticSearchBar {
@@ -13,6 +15,7 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
     NSProgressIndicator *_spinner;
     NSButton    *_closeBtn;
     NSTimer     *_debounceTimer;
+    NSPopUpButton *_sensitivityPopup;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -57,6 +60,17 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
     _statusLabel.font = [NSFont systemFontOfSize:11];
     _statusLabel.textColor = [NSColor secondaryLabelColor];
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    [_statusLabel setContentCompressionResistancePriority:250 forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+    _sensitivityPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    _sensitivityPopup.translatesAutoresizingMaskIntoConstraints = NO;
+    _sensitivityPopup.controlSize = NSControlSizeSmall;
+    _sensitivityPopup.target = self;
+    _sensitivityPopup.action = @selector(sensitivityChanged:);
+    [_sensitivityPopup addItemsWithTitles:@[@"Strict", @"Standard", @"Broad"]];
+    NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:kSensitivityPreference];
+    [_sensitivityPopup selectItemAtIndex:std::clamp(saved, (NSInteger)-1, (NSInteger)1) + 1];
 
     _closeBtn = [NSButton buttonWithTitle:@"✕" target:self action:@selector(closeBar:)];
     _closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
@@ -64,7 +78,7 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
     _closeBtn.font = [NSFont systemFontOfSize:12];
 
     for (NSView *v in @[_titleLabel, _queryField, _legendLabel,
-                        _spinner, _statusLabel, _closeBtn])
+                        _spinner, _statusLabel, _closeBtn, _sensitivityPopup])
         [self addSubview:v];
 
     NSDictionary *views = @{
@@ -75,18 +89,23 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
         @"spin":   _spinner,
         @"status": _statusLabel,
         @"close":  _closeBtn,
+        @"sensitivity": _sensitivityPopup,
     };
     NSDictionary *metrics = @{@"pad": @8, @"sp": @4};
 
     [NSLayoutConstraint activateConstraints:[NSLayoutConstraint
         constraintsWithVisualFormat:@"H:|-(0)-[sep]-(0)-|" options:0 metrics:nil views:views]];
     [NSLayoutConstraint activateConstraints:[NSLayoutConstraint
-        constraintsWithVisualFormat:@"H:|-(pad)-[lbl]-(sp)-[field(>=160)]-(8)-[legend]-(8)-[spin(16)]-(sp)-[status(>=60)]-(>=pad)-[close(24)]-(pad)-|"
+        constraintsWithVisualFormat:@"H:|-(pad)-[lbl]-(sp)-[field(>=120)]-(8)-[close(24)]-(pad)-|"
+                           options:NSLayoutFormatAlignAllCenterY metrics:metrics views:views]];
+    [NSLayoutConstraint activateConstraints:[NSLayoutConstraint
+        constraintsWithVisualFormat:@"H:|-(pad)-[sensitivity]-(8)-[legend]-(8)-[spin(16)]-(sp)-[status(>=0)]-(pad)-|"
                            options:NSLayoutFormatAlignAllCenterY metrics:metrics views:views]];
     [NSLayoutConstraint activateConstraints:@[
         [sep.topAnchor constraintEqualToAnchor:self.topAnchor],
         [sep.heightAnchor constraintEqualToConstant:1],
-        [_titleLabel.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        [_titleLabel.centerYAnchor constraintEqualToAnchor:self.topAnchor constant:17],
+        [_sensitivityPopup.centerYAnchor constraintEqualToAnchor:self.topAnchor constant:45],
     ]];
 
     [self retranslateUI];
@@ -103,19 +122,13 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
 }
 
 - (NSAttributedString *)legendString {
-    // Swatches match the heatmap anchors in SemanticHeatmapController.mm
-    // (nppHeatColorBGR).
-    static const struct { CGFloat r, g, b; } ramp[6] = {
-        { 0.84, 0.27, 0.25 },   // #D64541 red          (≤ 0.35)
-        { 0.70, 0.41, 0.39 },   // #B26964 red→grey     (~0.60)
-        { 0.56, 0.56, 0.56 },   // #8E8E8E grey         (~0.75)
-        { 0.37, 0.68, 0.50 },   // #5EAD7F grey→green   (~0.84)
-        { 0.18, 0.80, 0.44 },   // #2ECC71 bright green (~0.90)
-        { 0.04, 0.54, 0.27 },   // #0B8A45 deep green   (near-exact, ≥ 0.9)
-    };
+    static const double scores[] = {0.35, 0.60, 0.75, 0.84, 0.90, 0.93};
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc] init];
     for (int i = 0; i < 6; i++) {
-        NSColor *c = [NSColor colorWithRed:ramp[i].r green:ramp[i].g blue:ramp[i].b alpha:1];
+        uint32_t bgr = SemanticHeatmap::colorBGR(scores[i]);
+        NSColor *c = [NSColor colorWithRed:(bgr & 255) / 255.0
+                                   green:((bgr >> 8) & 255) / 255.0
+                                    blue:((bgr >> 16) & 255) / 255.0 alpha:1];
         [s appendAttributedString:
             [[NSAttributedString alloc] initWithString:@"■"
                                             attributes:@{ NSForegroundColorAttributeName: c,
@@ -131,9 +144,25 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
     _titleLabel.stringValue = [loc translate:@"Semantic:"];
     _queryField.placeholderString = [loc translate:@"Describe what you're looking for…"];
     _closeBtn.toolTip = [loc translate:@"Close"];
+    [_closeBtn setAccessibilityLabel:[loc translate:@"Close semantic search"]];
+    [_queryField setAccessibilityLabel:[loc translate:@"Semantic search query"]];
+    NSArray<NSString *> *titles = @[@"Strict", @"Standard", @"Broad"];
+    for (NSInteger i = 0; i < 3; ++i)
+        [_sensitivityPopup itemAtIndex:i].title = [loc translate:titles[i]];
+    [_sensitivityPopup setAccessibilityLabel:[loc translate:@"Heatmap sensitivity"]];
+    _sensitivityPopup.toolTip = [loc translate:@"Heatmap sensitivity: Broad colors weaker matches green; Strict requires stronger matches. Scores are unchanged."];
+    _legendLabel.toolTip = [loc translate:@"Red: less similar. Grey: intermediate. Green: more similar. Colors depend on sensitivity; they are not confidence percentages."];
+    [_legendLabel setAccessibilityLabel:_legendLabel.toolTip];
 }
 
 - (CGFloat)preferredHeight { return kBarHeight; }
+- (NSInteger)sensitivity { return _sensitivityPopup.indexOfSelectedItem - 1; }
+- (NSString *)query { return _queryField.stringValue; }
+
+- (void)sensitivityChanged:(id)sender {
+    [[NSUserDefaults standardUserDefaults] setInteger:self.sensitivity forKey:kSensitivityPreference];
+    [_delegate semanticSearchBar:self sensitivityDidChange:self.sensitivity];
+}
 
 - (void)activate {
     [self.window makeFirstResponder:_queryField];
@@ -149,6 +178,7 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;
 
 - (void)setStatus:(NSString *)text busy:(BOOL)busy {
     _statusLabel.stringValue = text ?: @"";
+    _statusLabel.toolTip = _statusLabel.stringValue;
     if (busy) [_spinner startAnimation:nil];
     else      [_spinner stopAnimation:nil];
 }

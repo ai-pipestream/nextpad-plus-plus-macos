@@ -4,9 +4,12 @@
 #import "AppleNLEmbeddingProvider.h"
 #import "MetalSimilarityEngine.h"
 #import "SpillableVectorIndex.h"
+#include "SemanticHeatmapColors.h"
 #import <NaturalLanguage/NaturalLanguage.h>
 #include "Scintilla.h"
 #include <algorithm>
+#include <atomic>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -31,40 +34,6 @@ struct NppSentenceSpan {
     long byteLength;
 };
 
-// Absolute cosine → color: raw score (clamped to [0,1]) interpolated
-// piecewise-linearly through fixed anchors, so colors are comparable across
-// queries (no per-document normalization). Scores below ~0.6 read as red
-// (stronger the lower), ~0.75 is neutral grey, and 0.9+ is deep green for
-// near-exact matches.
-static sptr_t nppHeatColorBGR(double score) {
-    static const struct { double s; int r, g, b; } kStops[] = {
-        { 0.00, 0xD6, 0x45, 0x41 },   // strong red
-        { 0.35, 0xD6, 0x45, 0x41 },   // red band ends — fade toward grey begins
-        { 0.60, 0xB2, 0x69, 0x64 },   // red/grey boundary
-        { 0.72, 0x8E, 0x8E, 0x8E },   // grey
-        { 0.78, 0x8E, 0x8E, 0x8E },   // grey plateau around 0.75
-        { 0.90, 0x2E, 0xCC, 0x71 },   // bright green
-        { 0.93, 0x0B, 0x8A, 0x45 },   // deep green reached
-        { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact)
-    };
-    static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);
-
-    double t = std::min(1.0, std::max(0.0, score));
-    int r = kStops[kStopCount - 1].r,
-        g = kStops[kStopCount - 1].g,
-        b = kStops[kStopCount - 1].b;
-    for (int i = 1; i < kStopCount; i++) {
-        if (t > kStops[i].s) continue;
-        double span = kStops[i].s - kStops[i - 1].s;
-        double f = (span > 0) ? (t - kStops[i - 1].s) / span : 1.0;
-        r = (int)(kStops[i - 1].r + (kStops[i].r - kStops[i - 1].r) * f);
-        g = (int)(kStops[i - 1].g + (kStops[i].g - kStops[i - 1].g) * f);
-        b = (int)(kStops[i - 1].b + (kStops[i].b - kStops[i - 1].b) * f);
-        break;
-    }
-    return (sptr_t)((b << 16) | (g << 8) | r);   // Scintilla wants BGR
-}
-
 @implementation SemanticHeatmapController {
     EditorView *__weak _editor;
 
@@ -86,11 +55,15 @@ static sptr_t nppHeatColorBGR(double score) {
     int64_t   _nextSentenceID;
     BOOL      _indexReady;
     NSString *_query;
+    NSInteger _sensitivity;
+    std::vector<SemanticHit> _lastHits;
+    NSString *_indexStatus;
+    NSString *_providerLanguage;
 
     // Generations: bumped on main whenever inputs change; background results
     // carrying a stale generation are dropped on arrival.
-    uint64_t _buildGeneration;
-    uint64_t _queryGeneration;
+    std::atomic<uint64_t> _buildGeneration;
+    std::atomic<uint64_t> _queryGeneration;
     uint64_t _pendingRebuildToken;  // debounce token for edit-triggered rebuilds
 }
 
@@ -102,6 +75,8 @@ static sptr_t nppHeatColorBGR(double score) {
 - (instancetype)init {
     self = [super init];
     if (!self) return nil;
+    _buildGeneration.store(0);
+    _queryGeneration.store(0);
     _workQueue = dispatch_queue_create("org.nextpadplusplus.semantic-heatmap",
                                        DISPATCH_QUEUE_SERIAL);
     _embedCache = [[NSCache alloc] init];
@@ -116,10 +91,20 @@ static sptr_t nppHeatColorBGR(double score) {
 
 - (EditorView *)editor { return _editor; }
 
+- (NSInteger)sensitivity { return _sensitivity; }
+
+- (void)setSensitivity:(NSInteger)sensitivity {
+    _sensitivity = std::clamp(sensitivity, (NSInteger)-1, (NSInteger)1);
+    [self paintHits:_lastHits];
+}
+
 #pragma mark - Attach / detach
 
 - (void)attachToEditor:(EditorView *)editor {
     if (editor == _editor) return;
+    _buildGeneration++;
+    _queryGeneration++;
+    _pendingRebuildToken++;
     [self clearHeatmap];
     [[NSNotificationCenter defaultCenter] removeObserver:self
         name:EditorViewTextDidChangeNotification object:nil];
@@ -143,6 +128,7 @@ static sptr_t nppHeatColorBGR(double score) {
     _indexReady = NO;
     _buildGeneration++;
     _queryGeneration++;
+    _pendingRebuildToken++;
 }
 
 - (void)configureIndicatorOn:(EditorView *)editor {
@@ -161,6 +147,7 @@ static sptr_t nppHeatColorBGR(double score) {
     // Invalidate immediately (in-flight results become stale), rebuild lazily.
     _indexReady = NO;
     _buildGeneration++;
+    [self clearHeatmap];
     uint64_t token = ++_pendingRebuildToken;
     __weak __typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kRebuildDebounceNs),
@@ -178,6 +165,9 @@ static sptr_t nppHeatColorBGR(double score) {
     if (!editor) return;
     ScintillaView *sci = editor.scintillaView;
 
+    uint64_t gen = ++_buildGeneration;
+    _indexReady = NO;
+    [self clearHeatmap];
     sptr_t docLen = [sci message:SCI_GETLENGTH];
     if (editor.largeFileMode || docLen > kMaxDocBytes) {
         [self reportStatus:@"Document too large for semantic search" busy:NO];
@@ -190,14 +180,13 @@ static sptr_t nppHeatColorBGR(double score) {
     NSData *docBytes = chars ? [NSData dataWithBytes:chars length:(NSUInteger)docLen]
                              : [NSData data];
 
-    uint64_t gen = ++_buildGeneration;
     int64_t firstID = _nextSentenceID;
     [self reportStatus:@"Indexing…" busy:YES];
 
     __weak __typeof(self) weakSelf = self;
     dispatch_async(_workQueue, ^{
         __typeof(self) self_ = weakSelf;
-        if (!self_) return;
+        if (!self_ || gen != self_->_buildGeneration) return;
 
         NSString *text = [[NSString alloc] initWithData:docBytes
                                                encoding:NSUTF8StringEncoding];
@@ -230,13 +219,18 @@ static sptr_t nppHeatColorBGR(double score) {
 
                 [sentences addObject:sentence];
                 spans->push_back(NppSentenceSpan{ byteStart, byteLen });
-                if (sentences.count >= kMaxSentences) *stop = YES;
+                if (sentences.count > kMaxSentences) *stop = YES;
             }];
         }
 
-        NSString *pipelineError = [self_ ensurePipelineForSample:text];
+        if (!text || sentences.count > kMaxSentences) {
+            [self_ reportBuildError:!text ? @"Document is not valid UTF-8"
+                : @"Document has too many sentences for semantic search" generation:gen];
+            return;
+        }
+        NSString *pipelineError = sentences.count ? [self_ ensurePipelineForSample:text] : nil;
         if (pipelineError) {
-            [self_ reportStatus:pipelineError busy:NO];
+            [self_ reportBuildError:pipelineError generation:gen];
             return;
         }
 
@@ -247,6 +241,7 @@ static sptr_t nppHeatColorBGR(double score) {
         int64_t sid = firstID;
         NSUInteger embedded = 0;
         for (NSString *s in sentences) {
+            if (gen != self_->_buildGeneration) return;
             NSData *cached = [self_->_embedCache objectForKey:s];
             if (cached.length == dim * sizeof(float)) {
                 memcpy(scratch.data(), cached.bytes, cached.length);
@@ -255,22 +250,28 @@ static sptr_t nppHeatColorBGR(double score) {
                                                              length:dim * sizeof(float)]
                                        forKey:s];
             } else {
-                // Unembeddable sentence — store a zero vector (scores ~0) to
-                // keep ids aligned with spans.
-                std::fill(scratch.begin(), scratch.end(), 0.0f);
+                // Preserve span ids, but do not paint failed embeddings as unrelated.
+                sid++;
+                continue;
             }
-            [self_->_index addVector:scratch.data() sentenceID:sid++];
+            if (![self_->_index addVector:scratch.data() sentenceID:sid++]) {
+                [self_ reportBuildError:@"Could not store sentence embeddings" generation:gen];
+                return;
+            }
             embedded++;
         }
 
-        NSString *status = [NSString stringWithFormat:@"%lu sentences · %@",
-                            (unsigned long)embedded, self_->_engine.engineName];
+        NSString *status = sentences.count
+            ? [NSString stringWithFormat:@"%lu of %lu sentences indexed · %@",
+                (unsigned long)embedded, (unsigned long)sentences.count, self_->_engine.engineName]
+            : @"No sentences to search";
         dispatch_async(dispatch_get_main_queue(), ^{
             if (gen != self_->_buildGeneration) return;   // superseded by an edit
             self_->_spans = *spans;
             self_->_firstSentenceID = firstID;
             self_->_nextSentenceID  = firstID + (int64_t)spans->size();
             self_->_indexReady = YES;
+            self_->_indexStatus = status;
             [self_ reportStatus:status busy:NO];
             if (self_->_query.length) [self_ runQuery];
         });
@@ -281,6 +282,14 @@ static sptr_t nppHeatColorBGR(double score) {
 /// success or a user-facing error string. Fail-loud: without Metal/MPS the
 /// feature is unavailable — no CPU fallback.
 - (nullable NSString *)ensurePipelineForSample:(nullable NSString *)sampleText {
+    NSString *lang = sampleText.length
+        ? [NLLanguageRecognizer dominantLanguageForString:sampleText] : nil;
+    lang = lang ?: NLLanguageEnglish;
+    if (![_providerLanguage isEqualToString:lang]) {
+        _provider = nil;
+        [_embedCache removeAllObjects];
+        _providerLanguage = [lang copy];
+    }
     if (_provider && _provider.isAvailable && _engine) return nil;
     if (@available(macOS 14.0, *)) {
         if (!_engine) {
@@ -289,12 +298,6 @@ static sptr_t nppHeatColorBGR(double score) {
                 return @"Metal GPU unavailable — semantic search disabled";
         }
         if (!_provider || !_provider.isAvailable) {
-            NSString *lang = nil;
-            if (sampleText.length) {
-                NSString *sample = sampleText.length > 2048
-                    ? [sampleText substringToIndex:2048] : sampleText;
-                lang = [NLLanguageRecognizer dominantLanguageForString:sample];
-            }
             _provider = [[AppleNLEmbeddingProvider alloc] initWithLanguageHint:lang];
             if (!_provider.isAvailable) {
                 _provider = nil;
@@ -311,9 +314,10 @@ static sptr_t nppHeatColorBGR(double score) {
 
 - (void)updateQuery:(NSString *)query {
     _query = [query copy] ?: @"";
+    _queryGeneration++;
+    [self clearHeatmap];
     if (_query.length == 0) {
-        _queryGeneration++;
-        [self clearHeatmap];
+        if (_indexReady) [self reportStatus:_indexStatus ?: @"" busy:NO];
         return;
     }
     if (!_indexReady) return;   // rebuild completion re-runs the query
@@ -329,13 +333,14 @@ static sptr_t nppHeatColorBGR(double score) {
     __weak __typeof(self) weakSelf = self;
     dispatch_async(_workQueue, ^{
         __typeof(self) self_ = weakSelf;
-        if (!self_ || !self_->_provider) return;
+        if (!self_ || qGen != self_->_queryGeneration ||
+            bGen != self_->_buildGeneration || !self_->_provider) return;
 
         NSUInteger dim = self_->_provider.dimension;
         std::vector<float> qVec(dim);
         if (![self_->_provider embedString:query into:qVec.data()]) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (qGen != self_->_queryGeneration) return;
+                if (qGen != self_->_queryGeneration || bGen != self_->_buildGeneration) return;
                 [self_ reportStatus:@"Query could not be embedded" busy:NO];
             });
             return;
@@ -351,7 +356,14 @@ static sptr_t nppHeatColorBGR(double score) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (qGen != self_->_queryGeneration ||
                 bGen != self_->_buildGeneration) return;   // stale
+            if (got != n) {
+                [self_ clearHeatmap];
+                [self_ reportStatus:@"Could not score sentence embeddings" busy:NO];
+                return;
+            }
+            self_->_lastHits = *hits;
             [self_ paintHits:*hits];
+            [self_ reportStatus:self_->_indexStatus ?: @"" busy:NO];
         });
     });
 }
@@ -375,18 +387,26 @@ static sptr_t nppHeatColorBGR(double score) {
         long len = std::min((long)span.byteLength, (long)(docLen - span.byteStart));
 
         [sci message:SCI_SETINDICATORVALUE
-              wParam:(uptr_t)(nppHeatColorBGR((double)h.score) | SC_INDICVALUEBIT)];
+              wParam:(uptr_t)(SemanticHeatmap::colorBGR(h.score, (int)_sensitivity) | SC_INDICVALUEBIT)];
         [sci message:SCI_INDICATORFILLRANGE wParam:(uptr_t)span.byteStart lParam:len];
     }
 }
 
 - (void)clearHeatmap {
+    _lastHits.clear();
     EditorView *editor = _editor;
     if (!editor) return;
     ScintillaView *sci = editor.scintillaView;
     [sci message:SCI_SETINDICATORCURRENT wParam:kSemanticHeatmapIndicator];
     [sci message:SCI_INDICATORCLEARRANGE wParam:0
           lParam:[sci message:SCI_GETLENGTH]];
+}
+
+- (void)reportBuildError:(NSString *)status generation:(uint64_t)generation {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != self->_buildGeneration) return;
+        [self reportStatus:status busy:NO];
+    });
 }
 
 - (void)reportStatus:(NSString *)status busy:(BOOL)busy {

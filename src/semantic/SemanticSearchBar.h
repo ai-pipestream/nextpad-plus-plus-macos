@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Fired (debounced) as the user types. Empty string means "clear heatmap".
 - (void)semanticSearchBar:(id)bar queryDidChange:(NSString *)query;
 - (void)semanticSearchBarDidClose:(id)bar;
+- (void)semanticSearchBar:(id)bar sensitivityDidChange:(NSInteger)sensitivity;
 @end
 
 /// Narrow live-search bar shown below the editor — the semantic sibling of
@@ -19,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Preferred height when visible.
 @property (nonatomic, readonly) CGFloat preferredHeight;
+@property (nonatomic, readonly) NSInteger sensitivity;
+@property (nonatomic, readonly, copy) NSString *query;
 
 /// Make the query field first responder.
 - (void)activate;

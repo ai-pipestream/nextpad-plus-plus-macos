@@ -35,6 +35,26 @@ Nextpad++ for macOS brings the beloved Notepad++ Windows code editor to Apple's 
 
 The goal is not just to make Notepad++ "run" on Mac — it's to make it feel like it *belongs* there, with native menus, shortcuts, file dialogs, dark mode, Tahoe look, full plugin ecosystem and system integration.
 
+## Semantic heatmap search
+
+Use **Search → Semantic Heatmap Search** to describe what you are looking for.
+The active document's sentences are colored from red (less similar), through
+grey, to green (more similar). Search follows the active tab or split pane.
+Sentences that cannot be embedded remain uncolored; the status shows how many
+sentences were indexed.
+
+The search bar remembers your **Strict**, **Standard**, or **Broad** sensitivity
+selection. Standard preserves the original color thresholds; Strict requires
+stronger similarity for green, while Broad makes weaker matches green. Changing
+sensitivity repaints immediately without re-embedding the document. Colors are
+relative to the selected model and sensitivity, not confidence percentages.
+
+Requires macOS 14+, a Metal/MPS-capable GPU, and an available Apple Natural
+Language embedding model for the document's language. Model assets may require
+a download; when available, the static sentence model is used in the meantime.
+Documents exceeding 2 MiB or 4,096 sentences are rejected rather than partially
+searched. See [semantic validation](tests/README.md) for tests and native checks.
+
 ## Screenshots
 
 <p align="center">
