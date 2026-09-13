@@ -41,28 +41,28 @@ struct NppSentenceSpan {
 // min–max normalization. An earlier version stretched each query's score range
 // to the full ramp; with cosine clustering that pushed most sentences into the
 // upper half and "everything green looked green". Fixed anchors keep colors
-// comparable across queries. Tuned after M2 live feedback: the DARK colors at
-// both extremes occupy narrow bands only, transitions start closer to the
-// middle, and most of the upper-mid range reads as BRIGHT green rather than
-// lingering in dark green:
+// comparable across queries. Twice retuned on an M2: round 1 narrowed the dark
+// bands at the extremes; round 2 (at fill alpha 100 "everything looks like a
+// match") pushed green entry UP so mid scores stay grey longer and only
+// genuinely strong matches go green at all:
 //
-//     ≤ 0.30        strong red         (#D64541 — narrow low band)
-//   0.30 – 0.48     red fades → grey   (fade starts well before the middle)
-//   0.48 – 0.58     grey plateau       (#8E8E8E — centered on ~0.5)
-//   0.58 – 0.72     grey → bright green
-//   0.72 – 0.92     bright green       (#2ECC71 — the "good match" band)
-//   0.92 – 1.0      → DEEP green       (#0B8A45 — reserved for near-exact)
+//     ≤ 0.35        strong red         (#D64541 — clear lows)
+//   0.35 – 0.50     red fades → grey
+//   0.50 – 0.70     grey plateau       (#8E8E8E — wide neutral middle)
+//   0.70 – 0.82     grey → bright green (green entry deliberately late)
+//   0.82 – 0.93     bright green       (#2ECC71 — strong matches)
+//   0.93 – 1.0      → DEEP green       (#0B8A45 — reserved for near-exact)
 //
 // Piecewise-linear between the stops below; steepness comes from the anchor
 // placement rather than a gamma curve so each band is easy to reason about.
 static sptr_t nppHeatColorBGR(double score) {
     static const struct { double s; int r, g, b; } kStops[] = {
         { 0.00, 0xD6, 0x45, 0x41 },   // strong red
-        { 0.30, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
-        { 0.48, 0x8E, 0x8E, 0x8E },   // grey
-        { 0.58, 0x8E, 0x8E, 0x8E },   // grey plateau ends
-        { 0.72, 0x2E, 0xCC, 0x71 },   // bright green reached
-        { 0.92, 0x2E, 0xCC, 0x71 },   // bright-green band ends
+        { 0.35, 0xD6, 0x45, 0x41 },   // red band ends — fade begins
+        { 0.50, 0x8E, 0x8E, 0x8E },   // grey
+        { 0.70, 0x8E, 0x8E, 0x8E },   // grey plateau ends (wide middle)
+        { 0.82, 0x2E, 0xCC, 0x71 },   // bright green reached
+        { 0.93, 0x2E, 0xCC, 0x71 },   // bright-green band ends
         { 1.00, 0x0B, 0x8A, 0x45 },   // deep green (near-exact only)
     };
     static const int kStopCount = sizeof(kStops) / sizeof(kStops[0]);

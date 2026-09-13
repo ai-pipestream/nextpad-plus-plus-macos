@@ -107,11 +107,11 @@ static const NSTimeInterval kQueryDebounceSec = 0.30;   // embedding isn't free
     // SemanticHeatmapController.mm (nppHeatColorBGR): red band, red→grey mid,
     // grey plateau, green, and the deep near-exact green.
     static const struct { CGFloat r, g, b; } ramp[5] = {
-        { 0.84, 0.27, 0.25 },   // #D64541 red         (≤ 0.30)
-        { 0.70, 0.41, 0.39 },   // #B26964 red→grey    (~0.39)
-        { 0.56, 0.56, 0.56 },   // #8E8E8E grey        (0.48–0.58)
-        { 0.18, 0.80, 0.44 },   // #2ECC71 bright green (0.72–0.92)
-        { 0.04, 0.54, 0.27 },   // #0B8A45 deep green  (near-exact, ≥ 0.92)
+        { 0.84, 0.27, 0.25 },   // #D64541 red         (≤ 0.35)
+        { 0.70, 0.41, 0.39 },   // #B26964 red→grey    (~0.43)
+        { 0.56, 0.56, 0.56 },   // #8E8E8E grey        (0.50–0.70)
+        { 0.18, 0.80, 0.44 },   // #2ECC71 bright green (0.82–0.93)
+        { 0.04, 0.54, 0.27 },   // #0B8A45 deep green  (near-exact, ≥ 0.93)
     };
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc] init];
     for (int i = 0; i < 5; i++) {
